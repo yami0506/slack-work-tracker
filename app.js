@@ -191,7 +191,7 @@ function buildWorkPanelBlocks(activeSessions = []) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: '作業を始める時と終える時に、下のボタンを押してください。結果は押した本人だけに表示されます。',
+        text: '作業を始める時と終える時に、下のボタンを押してください。',
       },
     },
     {
