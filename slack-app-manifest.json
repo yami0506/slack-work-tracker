@@ -1,0 +1,39 @@
+{
+  "display_information": {
+    "name": "Work Tracker",
+    "description": "Slackで作業開始と作業終了を記録します。",
+    "background_color": "#2f4f4f"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Work Tracker",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/work",
+        "url": "https://example.com/slack/commands",
+        "description": "作業時間を記録する",
+        "usage_hint": "作業開始・作業終了",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "commands"
+      ]
+    }
+  },
+  "settings": {
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://example.com/slack/interactivity"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

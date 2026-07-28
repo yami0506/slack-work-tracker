@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: slack-work-tracker
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: SLACK_APP_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: WORK_PANEL_CHANNEL_ID
+        sync: false
+      - key: PUBLIC_ACTIVITY_NOTIFICATIONS
+        value: "false"

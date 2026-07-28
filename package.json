@@ -1,0 +1,25 @@
+{
+  "name": "slack-work-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal Slack work time tracker using Slack Bolt, Socket Mode, and Supabase.",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "check": "node --check app.js && node --check lib/time.js && node --check scripts/check-slack.js && node --check scripts/check-supabase.js && node --test",
+    "check:slack": "node scripts/check-slack.js",
+    "check:supabase": "node scripts/check-supabase.js",
+    "slack:manifest-url": "node scripts/print-slack-manifest-url.js",
+    "start": "node app.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.22.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "ws": "^7.5.13"
+  }
+}
