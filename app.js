@@ -165,7 +165,19 @@ function buildWorkCommandBlocks() {
   ];
 }
 
-function buildWorkPanelBlocks() {
+function buildActiveSessionsText(activeSessions) {
+  if (activeSessions.length === 0) {
+    return '*現在作業中*\n作業中のメンバーはいません。';
+  }
+
+  const rows = activeSessions.map((session) => {
+    return `• <@${session.slack_user_id}> ${formatTokyoDateTime(session.started_at)}〜`;
+  });
+
+  return ['*現在作業中*', ...rows].join('\n');
+}
+
+function buildWorkPanelBlocks(activeSessions = []) {
   return [
     {
       type: 'header',
@@ -180,6 +192,13 @@ function buildWorkPanelBlocks() {
       text: {
         type: 'mrkdwn',
         text: '作業を始める時と終える時に、下のボタンを押してください。結果は押した本人だけに表示されます。',
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: buildActiveSessionsText(activeSessions),
       },
     },
     buildWorkActionBlock(),
@@ -214,6 +233,24 @@ async function findActiveSession(supabase, slackUserId) {
   }
 
   return data;
+}
+
+async function findActiveSessions(supabase) {
+  const { data, error } = await supabase
+    .from(TABLE_NAME)
+    .select(SESSION_COLUMNS)
+    .is('ended_at', null)
+    .order('started_at', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+function getWorkPanelSettingKey(channelId) {
+  return `work_panel:${channelId}`;
 }
 
 async function getAppSetting(supabase, key) {
@@ -289,7 +326,15 @@ function getSlackUserId(body) {
   return body?.user?.id || body?.user_id || null;
 }
 
-async function postPublicActivityNotification({ client, config, text }) {
+async function getWorkPanelInfo(supabase, channelId) {
+  if (!channelId) {
+    return null;
+  }
+
+  return getAppSetting(supabase, getWorkPanelSettingKey(channelId));
+}
+
+async function postPublicActivityNotification({ client, config, supabase, text }) {
   if (!config.publicActivityNotifications) {
     return;
   }
@@ -300,12 +345,31 @@ async function postPublicActivityNotification({ client, config, text }) {
   }
 
   try {
+    const panelInfo = await getWorkPanelInfo(supabase, config.workPanelChannelId);
+
     await client.chat.postMessage({
       channel: config.workPanelChannelId,
       text,
+      thread_ts: panelInfo?.message_ts,
     });
   } catch (error) {
     console.error('作業状況のチャンネル通知に失敗しました。', getSlackErrorCode(error));
+  }
+}
+
+async function refreshWorkPanel({ client, config, supabase }) {
+  if (!config.workPanelChannelId) {
+    return;
+  }
+
+  try {
+    await publishOrUpdateWorkPanel({
+      client,
+      supabase,
+      channelId: config.workPanelChannelId,
+    });
+  } catch (error) {
+    console.error('作業パネルの更新に失敗しました。', getSlackErrorCode(error));
   }
 }
 
@@ -332,9 +396,12 @@ async function handleWorkStart({ body, client, config, respond, supabase }) {
 
     const createdSession = await createWorkSession(supabase, slackUserId, slackUserName);
 
+    await refreshWorkPanel({ client, config, supabase });
+
     await postPublicActivityNotification({
       client,
       config,
+      supabase,
       text: `▶ <@${slackUserId}> が作業を開始しました（${formatTokyoDateTime(createdSession.started_at)}）`,
     });
 
@@ -410,9 +477,12 @@ async function handleWorkEnd({ body, client, config, respond, supabase }) {
       ].join('\n'),
     );
 
+    await refreshWorkPanel({ client, config, supabase });
+
     await postPublicActivityNotification({
       client,
       config,
+      supabase,
       text: [
         `■ <@${slackUserId}> が作業を終了しました`,
         `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
@@ -432,9 +502,10 @@ function getSlackErrorCode(error) {
 }
 
 async function publishOrUpdateWorkPanel({ client, supabase, channelId }) {
-  const settingKey = `work_panel:${channelId}`;
+  const settingKey = getWorkPanelSettingKey(channelId);
   const text = '作業時間トラッカー';
-  const blocks = buildWorkPanelBlocks();
+  const activeSessions = await findActiveSessions(supabase);
+  const blocks = buildWorkPanelBlocks(activeSessions);
   const savedPanel = await getAppSetting(supabase, settingKey);
   const savedMessageTs = savedPanel?.message_ts;
 

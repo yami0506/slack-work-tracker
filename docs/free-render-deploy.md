@@ -81,6 +81,9 @@ PUBLIC_ACTIVITY_NOTIFICATIONS=false
 PUBLIC_ACTIVITY_NOTIFICATIONS=true
 ```
 
+この通知はチャンネル本体ではなく、常設パネルのスレッドにまとまります。
+常設パネル自体には、現在作業中のメンバーも表示されます。
+
 ## 4. デプロイする
 
 Renderで `Deploy` を実行します。

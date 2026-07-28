@@ -121,7 +121,7 @@ PUBLIC_ACTIVITY_NOTIFICATIONS=true
 ```
 
 最初は `PUBLIC_ACTIVITY_NOTIFICATIONS=false` でもOKです。
-チャンネルに「誰が開始・終了したか」を流したくなったら `true` にします。
+常設パネルのスレッドに「誰が開始・終了したか」を流したくなったら `true` にします。
 
 ## 4. UptimeRobot または cron-job.org
 
@@ -185,7 +185,8 @@ Bot招待:
 - 作業終了時に `■ 作業終了`
 
 結果は本人だけに表示されます。
-`PUBLIC_ACTIVITY_NOTIFICATIONS=true` の場合は、開始・終了の簡単な通知だけチャンネルにも流れます。
+常設パネルには現在作業中のメンバーが表示されます。
+`PUBLIC_ACTIVITY_NOTIFICATIONS=true` の場合は、開始・終了の簡単な通知だけ常設パネルのスレッドに流れます。
 
 ## 次にやる順番
 
