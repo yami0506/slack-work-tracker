@@ -489,7 +489,7 @@ async function getWorkPanelInfo(supabase, channelId) {
   return getAppSetting(supabase, getWorkPanelSettingKey(channelId));
 }
 
-async function postPublicActivityNotification({ client, config, supabase, text }) {
+async function postPublicActivityNotification({ client, config, supabase, text, threadTs = null }) {
   if (!config.publicActivityNotifications) {
     return false;
   }
@@ -500,12 +500,19 @@ async function postPublicActivityNotification({ client, config, supabase, text }
   }
 
   try {
-    const panelInfo = await getWorkPanelInfo(supabase, config.workPanelChannelId);
+    const panelInfo = threadTs ? null : await getWorkPanelInfo(supabase, config.workPanelChannelId);
+    const targetThreadTs = threadTs || panelInfo?.message_ts;
+
+    if (!targetThreadTs) {
+      console.error('作業パネルのスレッドIDを取得できないため、チャンネル通知をスキップしました。');
+      return false;
+    }
 
     await client.chat.postMessage({
       channel: config.workPanelChannelId,
       text,
-      thread_ts: panelInfo?.message_ts,
+      thread_ts: targetThreadTs,
+      reply_broadcast: false,
     });
 
     return true;
@@ -517,17 +524,18 @@ async function postPublicActivityNotification({ client, config, supabase, text }
 
 async function refreshWorkPanel({ client, config, supabase }) {
   if (!config.workPanelChannelId) {
-    return;
+    return null;
   }
 
   try {
-    await publishOrUpdateWorkPanel({
+    return await publishOrUpdateWorkPanel({
       client,
       supabase,
       channelId: config.workPanelChannelId,
     });
   } catch (error) {
     console.error('作業パネルの更新に失敗しました。', getSlackErrorCode(error));
+    return null;
   }
 }
 
@@ -561,21 +569,22 @@ async function handleWorkStart({ body, client, config, supabase }) {
 
     const createdSession = await createWorkSession(supabase, slackUserId, slackUserName);
 
-    await refreshWorkPanel({ client, config, supabase });
+    const panelInfo = await refreshWorkPanel({ client, config, supabase });
 
     const startNotificationText = [
       `▶ <@${slackUserId}> が作業を開始しました`,
       `開始：${formatTokyoDateTime(createdSession.started_at)}`,
     ].join('\n');
 
-    const notifiedPublicly = await postPublicActivityNotification({
+    await postPublicActivityNotification({
       client,
       config,
       supabase,
       text: startNotificationText,
+      threadTs: panelInfo?.messageTs,
     });
 
-    if (body?.view?.id || !notifiedPublicly) {
+    if (body?.view?.id) {
       await showUserNotice({
         body,
         client,
@@ -654,9 +663,9 @@ async function handleWorkEnd({ body, client, config, supabase }) {
       return;
     }
 
-    await refreshWorkPanel({ client, config, supabase });
+    const panelInfo = await refreshWorkPanel({ client, config, supabase });
 
-    const notifiedPublicly = await postPublicActivityNotification({
+    await postPublicActivityNotification({
       client,
       config,
       supabase,
@@ -666,6 +675,7 @@ async function handleWorkEnd({ body, client, config, supabase }) {
         `終了：${formatTokyoDateTime(updatedSession.ended_at)}`,
         `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
       ].join('\n'),
+      threadTs: panelInfo?.messageTs,
     });
 
     const endNoticeText = [
@@ -675,7 +685,7 @@ async function handleWorkEnd({ body, client, config, supabase }) {
       `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
     ].join('\n');
 
-    if (body?.view?.id || !notifiedPublicly) {
+    if (body?.view?.id) {
       await showUserNotice({
         body,
         client,
@@ -718,7 +728,10 @@ async function publishOrUpdateWorkPanel({ client, supabase, channelId }) {
         blocks,
       });
       console.log(`作業パネルを更新しました。channel=${channelId}, ts=${savedMessageTs}`);
-      return;
+      return {
+        channelId,
+        messageTs: savedMessageTs,
+      };
     } catch (error) {
       console.error('既存の作業パネル更新に失敗しました。新しく投稿します。', getSlackErrorCode(error));
     }
@@ -736,6 +749,11 @@ async function publishOrUpdateWorkPanel({ client, supabase, channelId }) {
   });
 
   console.log(`作業パネルを投稿しました。channel=${channelId}, ts=${result.ts}`);
+
+  return {
+    channelId,
+    messageTs: result.ts,
+  };
 }
 
 let config;
