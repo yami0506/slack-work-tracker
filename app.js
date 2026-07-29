@@ -165,6 +165,49 @@ function buildWorkCommandBlocks() {
   ];
 }
 
+function buildWorkCommandModalView() {
+  return {
+    type: 'modal',
+    callback_id: 'work_command_modal',
+    title: {
+      type: 'plain_text',
+      text: '作業トラッカー',
+      emoji: true,
+    },
+    close: {
+      type: 'plain_text',
+      text: '閉じる',
+      emoji: true,
+    },
+    blocks: buildWorkCommandBlocks(),
+  };
+}
+
+function buildNoticeModalView(title, text) {
+  return {
+    type: 'modal',
+    title: {
+      type: 'plain_text',
+      text: title.slice(0, 24),
+      emoji: true,
+    },
+    close: {
+      type: 'plain_text',
+      text: '閉じる',
+      emoji: true,
+    },
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text,
+        },
+      },
+    ],
+  };
+}
+
 function buildActiveSessionsText(activeSessions) {
   if (activeSessions.length === 0) {
     return '*現在作業中*\n作業中のメンバーはいません。';
@@ -205,17 +248,41 @@ function buildWorkPanelBlocks(activeSessions = []) {
   ];
 }
 
-async function respondEphemeral(respond, text, blocks = undefined) {
+async function openWorkCommandModal({ body, client }) {
   try {
-    await respond({
-      response_type: 'ephemeral',
-      replace_original: false,
-      text,
-      blocks,
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildWorkCommandModalView(),
     });
   } catch (error) {
-    console.error('Slackへのメッセージ送信に失敗しました。', error);
+    console.error('作業操作モーダルの表示に失敗しました。', getSlackErrorCode(error));
   }
+}
+
+async function showUserNotice({ body, client, title, text }) {
+  const view = buildNoticeModalView(title, text);
+
+  try {
+    if (body?.view?.id) {
+      await client.views.update({
+        view_id: body.view.id,
+        view,
+      });
+      return true;
+    }
+
+    if (body?.trigger_id) {
+      await client.views.open({
+        trigger_id: body.trigger_id,
+        view,
+      });
+      return true;
+    }
+  } catch (error) {
+    console.error('個別案内モーダルの表示に失敗しました。', getSlackErrorCode(error));
+  }
+
+  return false;
 }
 
 async function findActiveSession(supabase, slackUserId) {
@@ -376,13 +443,18 @@ async function refreshWorkPanel({ client, config, supabase }) {
   }
 }
 
-async function handleWorkStart({ body, client, config, respond, supabase }) {
+async function handleWorkStart({ body, client, config, supabase }) {
   const slackUserId = getSlackUserId(body);
   const slackUserName = getSlackUserName(body?.user);
 
   if (!slackUserId) {
     console.error('作業開始処理でSlackユーザーIDを取得できませんでした。', body);
-    await respondEphemeral(respond, 'ユーザー情報を確認できませんでした。もう一度お試しください。');
+    await showUserNotice({
+      body,
+      client,
+      title: '確認できません',
+      text: 'ユーザー情報を確認できませんでした。もう一度お試しください。',
+    });
     return;
   }
 
@@ -390,10 +462,12 @@ async function handleWorkStart({ body, client, config, respond, supabase }) {
     const activeSession = await findActiveSession(supabase, slackUserId);
 
     if (activeSession) {
-      await respondEphemeral(
-        respond,
-        `すでに作業中です。\n開始時刻：${formatTokyoDateTime(activeSession.started_at)}`,
-      );
+      await showUserNotice({
+        body,
+        client,
+        title: '作業中です',
+        text: `すでに作業中です。\n開始時刻：${formatTokyoDateTime(activeSession.started_at)}`,
+      });
       return;
     }
 
@@ -413,11 +487,13 @@ async function handleWorkStart({ body, client, config, respond, supabase }) {
       text: startNotificationText,
     });
 
-    if (!notifiedPublicly) {
-      await respondEphemeral(
-        respond,
-        `▶ 作業を開始しました。\n開始時刻：${formatTokyoDateTime(createdSession.started_at)}`,
-      );
+    if (body?.view?.id || !notifiedPublicly) {
+      await showUserNotice({
+        body,
+        client,
+        title: '作業開始',
+        text: `▶ 作業を開始しました。\n開始時刻：${formatTokyoDateTime(createdSession.started_at)}`,
+      });
     }
   } catch (error) {
     if (isUniqueViolation(error)) {
@@ -427,10 +503,12 @@ async function handleWorkStart({ body, client, config, respond, supabase }) {
         const activeSession = await findActiveSession(supabase, slackUserId);
 
         if (activeSession) {
-          await respondEphemeral(
-            respond,
-            `すでに作業中です。\n開始時刻：${formatTokyoDateTime(activeSession.started_at)}`,
-          );
+          await showUserNotice({
+            body,
+            client,
+            title: '作業中です',
+            text: `すでに作業中です。\n開始時刻：${formatTokyoDateTime(activeSession.started_at)}`,
+          });
           return;
         }
       } catch (fetchError) {
@@ -440,19 +518,26 @@ async function handleWorkStart({ body, client, config, respond, supabase }) {
       console.error('作業開始処理でエラーが発生しました。', error);
     }
 
-    await respondEphemeral(
-      respond,
-      '作業開始を記録できませんでした。少し時間をおいてもう一度お試しください。',
-    );
+    await showUserNotice({
+      body,
+      client,
+      title: '記録できません',
+      text: '作業開始を記録できませんでした。少し時間をおいてもう一度お試しください。',
+    });
   }
 }
 
-async function handleWorkEnd({ body, client, config, respond, supabase }) {
+async function handleWorkEnd({ body, client, config, supabase }) {
   const slackUserId = getSlackUserId(body);
 
   if (!slackUserId) {
     console.error('作業終了処理でSlackユーザーIDを取得できませんでした。', body);
-    await respondEphemeral(respond, 'ユーザー情報を確認できませんでした。もう一度お試しください。');
+    await showUserNotice({
+      body,
+      client,
+      title: '確認できません',
+      text: 'ユーザー情報を確認できませんでした。もう一度お試しください。',
+    });
     return;
   }
 
@@ -460,20 +545,24 @@ async function handleWorkEnd({ body, client, config, respond, supabase }) {
     const activeSession = await findActiveSession(supabase, slackUserId);
 
     if (!activeSession) {
-      await respondEphemeral(
-        respond,
-        '開始中の作業がありません。先に「作業開始」を押してください。',
-      );
+      await showUserNotice({
+        body,
+        client,
+        title: '作業がありません',
+        text: '開始中の作業がありません。先に「作業開始」を押してください。',
+      });
       return;
     }
 
     const updatedSession = await finishWorkSession(supabase, activeSession, slackUserId);
 
     if (!updatedSession) {
-      await respondEphemeral(
-        respond,
-        '開始中の作業がありません。すでに終了済みの可能性があります。',
-      );
+      await showUserNotice({
+        body,
+        client,
+        title: '終了済みです',
+        text: '開始中の作業がありません。すでに終了済みの可能性があります。',
+      });
       return;
     }
 
@@ -491,23 +580,29 @@ async function handleWorkEnd({ body, client, config, respond, supabase }) {
       ].join('\n'),
     });
 
-    if (!notifiedPublicly) {
-      await respondEphemeral(
-        respond,
-        [
-          '■ 作業を終了しました。',
-          `開始：${formatTokyoDateTime(updatedSession.started_at)}`,
-          `終了：${formatTokyoDateTime(updatedSession.ended_at)}`,
-          `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
-        ].join('\n'),
-      );
+    const endNoticeText = [
+      '■ 作業を終了しました。',
+      `開始：${formatTokyoDateTime(updatedSession.started_at)}`,
+      `終了：${formatTokyoDateTime(updatedSession.ended_at)}`,
+      `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
+    ].join('\n');
+
+    if (body?.view?.id || !notifiedPublicly) {
+      await showUserNotice({
+        body,
+        client,
+        title: '作業終了',
+        text: endNoticeText,
+      });
     }
   } catch (error) {
     console.error('作業終了処理でエラーが発生しました。', error);
-    await respondEphemeral(
-      respond,
-      '作業終了を記録できませんでした。少し時間をおいてもう一度お試しください。',
-    );
+    await showUserNotice({
+      body,
+      client,
+      title: '記録できません',
+      text: '作業終了を記録できませんでした。少し時間をおいてもう一度お試しください。',
+    });
   }
 }
 
@@ -571,24 +666,20 @@ const app = new App({
   appToken: config.slackAppToken,
 });
 
-app.command('/work', async ({ ack, respond }) => {
+app.command('/work', async ({ ack, body, client }) => {
   await ack();
 
-  await respondEphemeral(
-    respond,
-    '作業の開始または終了を選択してください。',
-    buildWorkCommandBlocks(),
-  );
+  await openWorkCommandModal({ body, client });
 });
 
-app.action(ACTION_WORK_START, async ({ ack, body, client, respond }) => {
+app.action(ACTION_WORK_START, async ({ ack, body, client }) => {
   await ack();
-  await handleWorkStart({ body, client, config, respond, supabase });
+  await handleWorkStart({ body, client, config, supabase });
 });
 
-app.action(ACTION_WORK_END, async ({ ack, body, client, respond }) => {
+app.action(ACTION_WORK_END, async ({ ack, body, client }) => {
   await ack();
-  await handleWorkEnd({ body, client, config, respond, supabase });
+  await handleWorkEnd({ body, client, config, supabase });
 });
 
 app.error(async (error) => {
