@@ -8,6 +8,7 @@ import {
   formatDuration,
   formatTokyoDateTime,
   getTokyoDayRange,
+  getTokyoWeekRange,
 } from './lib/time.js';
 
 const { App } = slackBolt;
@@ -24,6 +25,7 @@ const TABLE_NAME = 'work_sessions';
 const APP_SETTINGS_TABLE_NAME = 'app_settings';
 const ACTION_WORK_START = 'work_start';
 const ACTION_WORK_END = 'work_end';
+const ACTION_REFRESH_HOME_DASHBOARD = 'refresh_home_dashboard';
 const DEFAULT_PORT = 3000;
 const SESSION_COLUMNS =
   'id, slack_user_id, slack_user_name, started_at, ended_at, duration_minutes, created_at';
@@ -127,33 +129,58 @@ function isUniqueViolation(error) {
   return error?.code === '23505' || error?.message?.includes('duplicate key');
 }
 
+function buildWorkStartButton() {
+  return {
+    type: 'button',
+    action_id: ACTION_WORK_START,
+    text: {
+      type: 'plain_text',
+      text: '▶ 作業開始',
+      emoji: true,
+    },
+    style: 'primary',
+    value: 'start',
+  };
+}
+
+function buildWorkEndButton() {
+  return {
+    type: 'button',
+    action_id: ACTION_WORK_END,
+    text: {
+      type: 'plain_text',
+      text: '■ 作業終了',
+      emoji: true,
+    },
+    style: 'danger',
+    value: 'end',
+  };
+}
+
+function buildRefreshHomeDashboardButton() {
+  return {
+    type: 'button',
+    action_id: ACTION_REFRESH_HOME_DASHBOARD,
+    text: {
+      type: 'plain_text',
+      text: '更新',
+      emoji: true,
+    },
+    value: 'refresh',
+  };
+}
+
 function buildWorkActionBlock() {
   return {
     type: 'actions',
-    elements: [
-      {
-        type: 'button',
-        action_id: ACTION_WORK_START,
-        text: {
-          type: 'plain_text',
-          text: '▶ 作業開始',
-          emoji: true,
-        },
-        style: 'primary',
-        value: 'start',
-      },
-      {
-        type: 'button',
-        action_id: ACTION_WORK_END,
-        text: {
-          type: 'plain_text',
-          text: '■ 作業終了',
-          emoji: true,
-        },
-        style: 'danger',
-        value: 'end',
-      },
-    ],
+    elements: [buildWorkStartButton(), buildWorkEndButton()],
+  };
+}
+
+function buildHomeDashboardActionBlock() {
+  return {
+    type: 'actions',
+    elements: [buildRefreshHomeDashboardButton(), buildWorkStartButton(), buildWorkEndButton()],
   };
 }
 
@@ -238,6 +265,94 @@ function buildTodayTotalsText(todayTotals) {
   return ['*本日の作業時間（作業中含む）*', ...rows].join('\n');
 }
 
+function buildWeekTotalsText(weekTotals) {
+  if (weekTotals.length === 0) {
+    return '*今週の作業時間（月〜日、作業中含む）*\n記録はまだありません。';
+  }
+
+  const rows = weekTotals.map((summary) => {
+    const activeLabel = summary.isActive ? '（作業中）' : '';
+    return `• <@${summary.slackUserId}> ${formatDuration(summary.totalMinutes)}${activeLabel}`;
+  });
+
+  return ['*今週の作業時間（月〜日、作業中含む）*', ...rows].join('\n');
+}
+
+function buildUserStatusText({ activeSessions, todayTotals, userId }) {
+  const activeSession = activeSessions.find((session) => session.slack_user_id === userId);
+  const todaySummary = todayTotals.find((summary) => summary.slackUserId === userId);
+  const todayDuration = todaySummary ? formatDuration(todaySummary.totalMinutes) : '0分';
+
+  if (activeSession) {
+    return [
+      '*あなたの状況*',
+      '状態：作業中',
+      `開始：${formatTokyoDateTime(activeSession.started_at)}`,
+      `本日：${todayDuration}`,
+    ].join('\n');
+  }
+
+  return ['*あなたの状況*', '状態：未開始または終了済み', `本日：${todayDuration}`].join('\n');
+}
+
+function buildHomeDashboardView({ activeSessions, todayTotals, weekTotals, userId, now = new Date() }) {
+  return {
+    type: 'home',
+    callback_id: 'work_dashboard_home',
+    blocks: [
+      {
+        type: 'header',
+        text: {
+          type: 'plain_text',
+          text: '作業時間ダッシュボード',
+          emoji: true,
+        },
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `最終更新：${formatTokyoDateTime(now)}`,
+          },
+        ],
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: buildUserStatusText({ activeSessions, todayTotals, userId }),
+        },
+      },
+      buildHomeDashboardActionBlock(),
+      {
+        type: 'divider',
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: buildActiveSessionsText(activeSessions),
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: buildTodayTotalsText(todayTotals),
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: buildWeekTotalsText(weekTotals),
+        },
+      },
+    ],
+  };
+}
+
 function buildWorkPanelBlocks(activeSessions = [], todayTotals = []) {
   return [
     {
@@ -288,7 +403,7 @@ async function showUserNotice({ body, client, title, text }) {
   const view = buildNoticeModalView(title, text);
 
   try {
-    if (body?.view?.id) {
+    if (isModalInteraction(body)) {
       await client.views.update({
         view_id: body.view.id,
         view,
@@ -341,12 +456,12 @@ async function findActiveSessions(supabase) {
   return data || [];
 }
 
-async function findTodaySessions(supabase, dayRange) {
+async function findSessionsInRange(supabase, range) {
   const { data, error } = await supabase
     .from(TABLE_NAME)
     .select(SESSION_COLUMNS)
-    .lt('started_at', dayRange.end.toISOString())
-    .or(`ended_at.gte.${dayRange.start.toISOString()},ended_at.is.null`)
+    .lt('started_at', range.end.toISOString())
+    .or(`ended_at.gte.${range.start.toISOString()},ended_at.is.null`)
     .order('started_at', { ascending: true });
 
   if (error) {
@@ -356,11 +471,11 @@ async function findTodaySessions(supabase, dayRange) {
   return data || [];
 }
 
-function calculateSessionMinutesWithinRange(session, dayRange, now = new Date()) {
+function calculateSessionMinutesWithinRange(session, range, now = new Date()) {
   const startedAtTime = new Date(session.started_at).getTime();
   const endedAtTime = session.ended_at ? new Date(session.ended_at).getTime() : now.getTime();
-  const rangeStartTime = dayRange.start.getTime();
-  const rangeEndTime = dayRange.end.getTime();
+  const rangeStartTime = range.start.getTime();
+  const rangeEndTime = range.end.getTime();
 
   if (Number.isNaN(startedAtTime) || Number.isNaN(endedAtTime)) {
     return 0;
@@ -373,11 +488,11 @@ function calculateSessionMinutesWithinRange(session, dayRange, now = new Date())
   return Math.floor(durationMs / 1000 / 60);
 }
 
-function summarizeTodaySessions(sessions, dayRange, now = new Date()) {
+function summarizeSessions(sessions, range, now = new Date()) {
   const summariesByUser = new Map();
 
   for (const session of sessions) {
-    const totalMinutes = calculateSessionMinutesWithinRange(session, dayRange, now);
+    const totalMinutes = calculateSessionMinutesWithinRange(session, range, now);
     const isActive = !session.ended_at;
 
     if (totalMinutes === 0 && !isActive) {
@@ -481,6 +596,10 @@ function getSlackUserId(body) {
   return body?.user?.id || body?.user_id || null;
 }
 
+function isModalInteraction(body) {
+  return body?.view?.type === 'modal';
+}
+
 async function getWorkPanelInfo(supabase, channelId) {
   if (!channelId) {
     return null;
@@ -539,6 +658,45 @@ async function refreshWorkPanel({ client, config, supabase }) {
   }
 }
 
+async function loadDashboardData(supabase, now = new Date()) {
+  const todayRange = getTokyoDayRange(now);
+  const weekRange = getTokyoWeekRange(now);
+
+  const [activeSessions, todaySessions, weekSessions] = await Promise.all([
+    findActiveSessions(supabase),
+    findSessionsInRange(supabase, todayRange),
+    findSessionsInRange(supabase, weekRange),
+  ]);
+
+  return {
+    activeSessions,
+    todayTotals: summarizeSessions(todaySessions, todayRange, now),
+    weekTotals: summarizeSessions(weekSessions, weekRange, now),
+  };
+}
+
+async function publishHomeDashboard({ client, supabase, userId }) {
+  const now = new Date();
+  const dashboardData = await loadDashboardData(supabase, now);
+
+  await client.views.publish({
+    user_id: userId,
+    view: buildHomeDashboardView({
+      ...dashboardData,
+      userId,
+      now,
+    }),
+  });
+}
+
+async function refreshHomeDashboard({ client, supabase, userId }) {
+  try {
+    await publishHomeDashboard({ client, supabase, userId });
+  } catch (error) {
+    console.error('App Homeダッシュボードの更新に失敗しました。', getSlackErrorCode(error));
+  }
+}
+
 async function handleWorkStart({ body, client, config, supabase }) {
   const slackUserId = getSlackUserId(body);
   const slackUserName = getSlackUserName(body?.user);
@@ -584,7 +742,9 @@ async function handleWorkStart({ body, client, config, supabase }) {
       threadTs: panelInfo?.messageTs,
     });
 
-    if (body?.view?.id) {
+    await refreshHomeDashboard({ client, supabase, userId: slackUserId });
+
+    if (isModalInteraction(body)) {
       await showUserNotice({
         body,
         client,
@@ -678,6 +838,8 @@ async function handleWorkEnd({ body, client, config, supabase }) {
       threadTs: panelInfo?.messageTs,
     });
 
+    await refreshHomeDashboard({ client, supabase, userId: slackUserId });
+
     const endNoticeText = [
       '■ 作業を終了しました。',
       `開始：${formatTokyoDateTime(updatedSession.started_at)}`,
@@ -685,7 +847,7 @@ async function handleWorkEnd({ body, client, config, supabase }) {
       `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
     ].join('\n');
 
-    if (body?.view?.id) {
+    if (isModalInteraction(body)) {
       await showUserNotice({
         body,
         client,
@@ -711,10 +873,7 @@ function getSlackErrorCode(error) {
 async function publishOrUpdateWorkPanel({ client, supabase, channelId }) {
   const settingKey = getWorkPanelSettingKey(channelId);
   const text = '作業時間トラッカー';
-  const todayRange = getTokyoDayRange();
-  const activeSessions = await findActiveSessions(supabase);
-  const todaySessions = await findTodaySessions(supabase, todayRange);
-  const todayTotals = summarizeTodaySessions(todaySessions, todayRange);
+  const { activeSessions, todayTotals } = await loadDashboardData(supabase);
   const blocks = buildWorkPanelBlocks(activeSessions, todayTotals);
   const savedPanel = await getAppSetting(supabase, settingKey);
   const savedMessageTs = savedPanel?.message_ts;
@@ -789,6 +948,27 @@ app.action(ACTION_WORK_START, async ({ ack, body, client }) => {
 app.action(ACTION_WORK_END, async ({ ack, body, client }) => {
   await ack();
   await handleWorkEnd({ body, client, config, supabase });
+});
+
+app.action(ACTION_REFRESH_HOME_DASHBOARD, async ({ ack, body, client }) => {
+  await ack();
+
+  const slackUserId = getSlackUserId(body);
+
+  if (!slackUserId) {
+    console.error('App Home更新処理でSlackユーザーIDを取得できませんでした。', body);
+    return;
+  }
+
+  await refreshHomeDashboard({ client, supabase, userId: slackUserId });
+});
+
+app.event('app_home_opened', async ({ event, client }) => {
+  if (event.tab && event.tab !== 'home') {
+    return;
+  }
+
+  await refreshHomeDashboard({ client, supabase, userId: event.user });
 });
 
 app.error(async (error) => {

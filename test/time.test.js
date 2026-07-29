@@ -5,6 +5,7 @@ import {
   formatDuration,
   formatTokyoDateTime,
   getTokyoDayRange,
+  getTokyoWeekRange,
 } from '../lib/time.js';
 
 describe('formatDuration', () => {
@@ -61,5 +62,25 @@ describe('getTokyoDayRange', () => {
 
   it('不正な日時はnullを返す', () => {
     assert.equal(getTokyoDayRange('invalid'), null);
+  });
+});
+
+describe('getTokyoWeekRange', () => {
+  it('Asia/Tokyoの月曜始まりの週をUTCで返す', () => {
+    const range = getTokyoWeekRange('2026-07-29T10:30:00.000Z');
+
+    assert.equal(range.start.toISOString(), '2026-07-26T15:00:00.000Z');
+    assert.equal(range.end.toISOString(), '2026-08-02T15:00:00.000Z');
+  });
+
+  it('日曜は同じ週の月曜を開始日にする', () => {
+    const range = getTokyoWeekRange('2026-08-02T14:59:59.000Z');
+
+    assert.equal(range.start.toISOString(), '2026-07-26T15:00:00.000Z');
+    assert.equal(range.end.toISOString(), '2026-08-02T15:00:00.000Z');
+  });
+
+  it('不正な日時はnullを返す', () => {
+    assert.equal(getTokyoWeekRange('invalid'), null);
   });
 });

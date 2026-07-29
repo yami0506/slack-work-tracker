@@ -17,6 +17,8 @@
 - [ ] Slackアプリを作成した
 - [ ] Socket ModeをONにした
 - [ ] InteractivityをONにした
+- [ ] App HomeのHome TabをONにした
+- [ ] Event Subscriptionsで `app_home_opened` を購読した
 - [ ] App-Level Tokenに `connections:write` を付けた
 - [ ] Bot Token Scopesに `chat:write` を付けた
 - [ ] Bot Token Scopesに `commands` を付けた
@@ -43,6 +45,8 @@
 - [ ] チャンネル常設パネルを使う場合、起動時にチャンネルへボタンが投稿または更新される
 - [ ] チャンネル常設パネルに現在作業中のメンバーが表示される
 - [ ] チャンネル常設パネルに本日の作業時間が表示される
+- [ ] Work TrackerアプリのApp Homeにダッシュボードが表示される
+- [ ] App Homeの `更新` ボタンで表示が更新される
 - [ ] チャンネル通知を使う場合、開始・終了が常設パネルのスレッドに投稿される
 - [ ] `▶ 作業開始` で開始時刻が表示される
 - [ ] Supabaseに開始レコードが作成される

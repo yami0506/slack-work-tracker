@@ -9,6 +9,7 @@ JIRAに登録されていない作業も含めて、Slack上のボタン操作�
 - Slackで `/work` と入力すると、作業開始・作業終了のボタンがモーダルで表示されます。
 - 任意で、チーム用チャンネルに常設の作業ボタンを投稿できます。
 - 常設パネルには、現在作業中のメンバーと本日の作業時間が表示されます。
+- SlackアプリのApp Homeを開くと、現在作業中、本日合計、今週合計を確認できます。
 - `▶ 作業開始` を押すと、Supabaseに開始時刻を保存します。
 - `■ 作業終了` を押すと、未終了セッションを終了し、作業時間を分単位で保存します。
 - 作業開始・終了の成功メッセージは、共有通知が有効ならパネルのスレッドに表示されます。無効なら本人だけにモーダルで表示されます。
@@ -68,6 +69,7 @@ Slackアプリを新規作成するときは、手入力よりこちらが簡単
 6. 内容を確認してアプリを作成します。
 
 ManifestにはトークンやSecretは含まれていません。
+ManifestにはApp Homeと `app_home_opened` イベント購読も含まれています。
 
 URLから作成フローを開きたい場合は、以下でSlackアプリ作成URLを出力できます。
 
@@ -92,6 +94,20 @@ npm run slack:manifest-url
 3. App-Level Tokenの作成を求められた場合は、次の手順で作成します。
 4. ボタン操作を受け取るため、`Interactivity & Shortcuts` を開いて `Interactivity` もONにします。
 5. Request URL欄が表示される場合は、Socket Mode利用時でも入力が必要なことがあります。その場合は `https://example.com/slack/interactivity` のようなHTTPS URLを入力してください。
+
+### App Homeダッシュボードを使う場合
+
+Manifestを使わずに手動設定した場合は、Slackアプリ設定画面で以下も設定します。
+
+1. `App Home` を開きます。
+2. `Home Tab` をONにします。
+3. `Messages Tab` はOFFのままで構いません。
+4. `Event Subscriptions` を開きます。
+5. `Enable Events` をONにします。
+6. `Subscribe to bot events` に `app_home_opened` を追加します。
+7. 保存後、必要に応じてアプリをワークスペースに再インストールします。
+
+`app_home_opened` と `views.publish` は追加のBot Token Scopeなしで使えます。
 
 ## 7. App-Level Tokenの作成方法
 
@@ -310,7 +326,9 @@ PUBLIC_ACTIVITY_NOTIFICATIONS=true
 11. `WORK_PANEL_CHANNEL_ID` を設定した場合は、チャンネル上の常設ボタンでも同じ確認をします。
 12. 常設パネルの「現在作業中」が開始・終了に合わせて更新されることを確認します。
 13. 常設パネルの「本日の作業時間」が開始・終了に合わせて更新されることを確認します。
-14. `PUBLIC_ACTIVITY_NOTIFICATIONS=true` の場合は、開始・終了通知が常設パネルのスレッドにまとまることを確認します。
+14. Slackの左サイドバーから `Work Tracker` アプリを開き、App Homeにダッシュボードが表示されることを確認します。
+15. App Homeの `更新` ボタンで表示が更新されることを確認します。
+16. `PUBLIC_ACTIVITY_NOTIFICATIONS=true` の場合は、開始・終了通知が常設パネルのスレッドにまとまることを確認します。
 
 ## 18. 常時稼働させる場合
 
