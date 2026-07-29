@@ -336,12 +336,12 @@ async function getWorkPanelInfo(supabase, channelId) {
 
 async function postPublicActivityNotification({ client, config, supabase, text }) {
   if (!config.publicActivityNotifications) {
-    return;
+    return false;
   }
 
   if (!config.workPanelChannelId) {
     console.error('PUBLIC_ACTIVITY_NOTIFICATIONS=true ですが WORK_PANEL_CHANNEL_ID が未設定です。');
-    return;
+    return false;
   }
 
   try {
@@ -352,8 +352,11 @@ async function postPublicActivityNotification({ client, config, supabase, text }
       text,
       thread_ts: panelInfo?.message_ts,
     });
+
+    return true;
   } catch (error) {
     console.error('作業状況のチャンネル通知に失敗しました。', getSlackErrorCode(error));
+    return false;
   }
 }
 
@@ -398,17 +401,24 @@ async function handleWorkStart({ body, client, config, respond, supabase }) {
 
     await refreshWorkPanel({ client, config, supabase });
 
-    await postPublicActivityNotification({
+    const startNotificationText = [
+      `▶ <@${slackUserId}> が作業を開始しました`,
+      `開始：${formatTokyoDateTime(createdSession.started_at)}`,
+    ].join('\n');
+
+    const notifiedPublicly = await postPublicActivityNotification({
       client,
       config,
       supabase,
-      text: `▶ <@${slackUserId}> が作業を開始しました（${formatTokyoDateTime(createdSession.started_at)}）`,
+      text: startNotificationText,
     });
 
-    await respondEphemeral(
-      respond,
-      `▶ 作業を開始しました。\n開始時刻：${formatTokyoDateTime(createdSession.started_at)}`,
-    );
+    if (!notifiedPublicly) {
+      await respondEphemeral(
+        respond,
+        `▶ 作業を開始しました。\n開始時刻：${formatTokyoDateTime(createdSession.started_at)}`,
+      );
+    }
   } catch (error) {
     if (isUniqueViolation(error)) {
       console.error('作業開始が重複しました。既存セッションを確認します。', error);
@@ -467,27 +477,31 @@ async function handleWorkEnd({ body, client, config, respond, supabase }) {
       return;
     }
 
-    await respondEphemeral(
-      respond,
-      [
-        '■ 作業を終了しました。',
-        `開始：${formatTokyoDateTime(updatedSession.started_at)}`,
-        `終了：${formatTokyoDateTime(updatedSession.ended_at)}`,
-        `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
-      ].join('\n'),
-    );
-
     await refreshWorkPanel({ client, config, supabase });
 
-    await postPublicActivityNotification({
+    const notifiedPublicly = await postPublicActivityNotification({
       client,
       config,
       supabase,
       text: [
         `■ <@${slackUserId}> が作業を終了しました`,
+        `開始：${formatTokyoDateTime(updatedSession.started_at)}`,
+        `終了：${formatTokyoDateTime(updatedSession.ended_at)}`,
         `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
       ].join('\n'),
     });
+
+    if (!notifiedPublicly) {
+      await respondEphemeral(
+        respond,
+        [
+          '■ 作業を終了しました。',
+          `開始：${formatTokyoDateTime(updatedSession.started_at)}`,
+          `終了：${formatTokyoDateTime(updatedSession.ended_at)}`,
+          `作業時間：${formatDuration(updatedSession.duration_minutes)}`,
+        ].join('\n'),
+      );
+    }
   } catch (error) {
     console.error('作業終了処理でエラーが発生しました。', error);
     await respondEphemeral(
