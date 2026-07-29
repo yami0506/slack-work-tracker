@@ -160,6 +160,7 @@ SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 WORK_PANEL_CHANNEL_ID=
 PUBLIC_ACTIVITY_NOTIFICATIONS=false
+ALLOW_LOCAL_SOCKET_MODE=false
 PORT=3000
 ```
 
@@ -174,6 +175,8 @@ PORT=3000
 `WORK_PANEL_CHANNEL_ID` は任意です。設定すると、起動時に指定チャンネルへチーム用の作業ボタンを投稿または更新します。
 
 `PUBLIC_ACTIVITY_NOTIFICATIONS=true` にすると、作業開始・作業終了を常設パネルのスレッドに投稿します。
+
+`ALLOW_LOCAL_SOCKET_MODE` は、Render版との二重接続を防ぐための設定です。通常は `false` のままにしてください。Renderへ配置する前のローカル検証でだけ `true` にします。Renderでは自動設定される `RENDER=true` を検知するため、この値を変更する必要はありません。
 
 `PORT` はRenderなどのWebサービスでヘルスチェックを受けるためのHTTPポートです。ローカルでは通常 `3000` のままで構いません。
 
@@ -214,6 +217,12 @@ Slack App-Level Tokenの確認に成功しました。Socket Modeに接続でき
 
 ## 15. ローカル起動方法
 
+Renderへ配置する前のローカル検証でだけ、`.env` を次のようにします。
+
+```env
+ALLOW_LOCAL_SOCKET_MODE=true
+```
+
 ```bash
 npm start
 ```
@@ -226,6 +235,8 @@ Slack Work Trackerを起動しました。Socket Modeで接続中です。
 
 ローカルPCで起動している間は、同じSlackワークスペースに入っているメンバーも `/work` を使えます。
 ただし、PCを閉じたりプロセスを停止したりするとアプリも止まります。チームで常時使う場合は、Render、Fly.io、Railway、AWS、GCPなどのサーバーに配置してください。
+
+Renderで運用を始めたら、ローカルの `.env` は `ALLOW_LOCAL_SOCKET_MODE=false` に戻してください。同じSlackアプリをローカルとRenderで同時起動すると、Socket Modeの操作がどちらへ届くか一定せず、古いコードが混ざって動く原因になります。
 
 ## 16. チャンネル常設パネルを使う方法
 

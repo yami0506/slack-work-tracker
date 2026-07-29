@@ -10,6 +10,11 @@ import {
   getTokyoDayRange,
   getTokyoWeekRange,
 } from './lib/time.js';
+import {
+  buildThreadReplyMessage,
+  resolvePanelThreadTs,
+  shouldRecreateWorkPanel,
+} from './lib/slack-messages.js';
 
 const { App } = slackBolt;
 
@@ -45,6 +50,8 @@ function loadConfig() {
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY.trim(),
     workPanelChannelId: process.env.WORK_PANEL_CHANNEL_ID?.trim() || null,
     publicActivityNotifications: process.env.PUBLIC_ACTIVITY_NOTIFICATIONS?.trim() === 'true',
+    allowLocalSocketMode: process.env.ALLOW_LOCAL_SOCKET_MODE?.trim() === 'true',
+    isRender: process.env.RENDER?.trim() === 'true',
     port: Number(process.env.PORT || DEFAULT_PORT),
   };
 
@@ -65,6 +72,12 @@ function loadConfig() {
   if (config.publicActivityNotifications && !config.workPanelChannelId) {
     validationErrors.push(
       'PUBLIC_ACTIVITY_NOTIFICATIONS=true の場合は WORK_PANEL_CHANNEL_ID も設定してください。',
+    );
+  }
+
+  if (!config.isRender && !config.allowLocalSocketMode) {
+    validationErrors.push(
+      'Render版との二重接続を防ぐため、ローカルでのSocket Mode起動を停止しました。ローカル検証が必要な場合だけ ALLOW_LOCAL_SOCKET_MODE=true を設定してください。',
     );
   }
 
@@ -620,19 +633,30 @@ async function postPublicActivityNotification({ client, config, supabase, text, 
 
   try {
     const panelInfo = threadTs ? null : await getWorkPanelInfo(supabase, config.workPanelChannelId);
-    const targetThreadTs = threadTs || panelInfo?.message_ts;
+    const targetThreadTs = resolvePanelThreadTs({
+      channelId: config.workPanelChannelId,
+      explicitThreadTs: threadTs,
+      panelInfo,
+    });
 
     if (!targetThreadTs) {
-      console.error('作業パネルのスレッドIDを取得できないため、チャンネル通知をスキップしました。');
+      console.error(
+        '有効な作業パネルのスレッドIDを取得できないため、公開通知をスキップしました。',
+      );
       return false;
     }
 
-    await client.chat.postMessage({
-      channel: config.workPanelChannelId,
-      text,
-      thread_ts: targetThreadTs,
-      reply_broadcast: false,
-    });
+    const result = await client.chat.postMessage(
+      buildThreadReplyMessage({
+        channelId: config.workPanelChannelId,
+        threadTs: targetThreadTs,
+        text,
+      }),
+    );
+
+    console.log(
+      `作業通知をパネルのスレッドに投稿しました。channel=${config.workPanelChannelId}, thread_ts=${targetThreadTs}, ts=${result.ts}`,
+    );
 
     return true;
   } catch (error) {
@@ -892,7 +916,17 @@ async function publishOrUpdateWorkPanel({ client, supabase, channelId }) {
         messageTs: savedMessageTs,
       };
     } catch (error) {
-      console.error('既存の作業パネル更新に失敗しました。新しく投稿します。', getSlackErrorCode(error));
+      const errorCode = getSlackErrorCode(error);
+
+      if (!shouldRecreateWorkPanel(errorCode)) {
+        console.error(
+          '既存の作業パネル更新に失敗しました。一時エラーの可能性があるため、新しいチャンネル投稿は作成しません。',
+          errorCode,
+        );
+        throw error;
+      }
+
+      console.warn('保存済みの作業パネルが見つからないため、新しく投稿します。');
     }
   }
 

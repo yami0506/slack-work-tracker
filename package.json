@@ -6,7 +6,7 @@
   "type": "module",
   "main": "app.js",
   "scripts": {
-    "check": "node --check app.js && node --check lib/time.js && node --check scripts/check-slack.js && node --check scripts/check-supabase.js && node --test",
+    "check": "node --check app.js && node --check lib/time.js && node --check lib/slack-messages.js && node --check scripts/check-slack.js && node --check scripts/check-supabase.js && node --test",
     "check:slack": "node scripts/check-slack.js",
     "check:supabase": "node scripts/check-supabase.js",
     "slack:manifest-url": "node scripts/print-slack-manifest-url.js",
