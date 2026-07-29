@@ -15,6 +15,15 @@ import {
   resolvePanelThreadTs,
   shouldRecreateWorkPanel,
 } from './lib/slack-messages.js';
+import {
+  ACTION_REFRESH_HOME_DASHBOARD,
+  ACTION_WORK_END,
+  ACTION_WORK_START,
+  buildHomeDashboardView,
+  buildNoticeModalView,
+  buildWorkCommandModalView,
+  buildWorkPanelBlocks,
+} from './lib/slack-views.js';
 
 const { App } = slackBolt;
 
@@ -28,10 +37,8 @@ const REQUIRED_ENV_NAMES = [
 
 const TABLE_NAME = 'work_sessions';
 const APP_SETTINGS_TABLE_NAME = 'app_settings';
-const ACTION_WORK_START = 'work_start';
-const ACTION_WORK_END = 'work_end';
-const ACTION_REFRESH_HOME_DASHBOARD = 'refresh_home_dashboard';
 const DEFAULT_PORT = 3000;
+const RECENT_SESSION_LIMIT = 5;
 const SESSION_COLUMNS =
   'id, slack_user_id, slack_user_name, started_at, ended_at, duration_minutes, created_at';
 
@@ -142,273 +149,52 @@ function isUniqueViolation(error) {
   return error?.code === '23505' || error?.message?.includes('duplicate key');
 }
 
-function buildWorkStartButton() {
-  return {
-    type: 'button',
-    action_id: ACTION_WORK_START,
-    text: {
-      type: 'plain_text',
-      text: '▶ 作業開始',
-      emoji: true,
-    },
-    style: 'primary',
-    value: 'start',
-  };
-}
+async function openWorkCommandModal({ body, client, supabase }) {
+  let openedView;
 
-function buildWorkEndButton() {
-  return {
-    type: 'button',
-    action_id: ACTION_WORK_END,
-    text: {
-      type: 'plain_text',
-      text: '■ 作業終了',
-      emoji: true,
-    },
-    style: 'danger',
-    value: 'end',
-  };
-}
-
-function buildRefreshHomeDashboardButton() {
-  return {
-    type: 'button',
-    action_id: ACTION_REFRESH_HOME_DASHBOARD,
-    text: {
-      type: 'plain_text',
-      text: '更新',
-      emoji: true,
-    },
-    value: 'refresh',
-  };
-}
-
-function buildWorkActionBlock() {
-  return {
-    type: 'actions',
-    elements: [buildWorkStartButton(), buildWorkEndButton()],
-  };
-}
-
-function buildHomeDashboardActionBlock() {
-  return {
-    type: 'actions',
-    elements: [buildRefreshHomeDashboardButton(), buildWorkStartButton(), buildWorkEndButton()],
-  };
-}
-
-function buildWorkCommandBlocks() {
-  return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '作業の開始または終了を選択してください。',
-      },
-    },
-    buildWorkActionBlock(),
-  ];
-}
-
-function buildWorkCommandModalView() {
-  return {
-    type: 'modal',
-    callback_id: 'work_command_modal',
-    title: {
-      type: 'plain_text',
-      text: '作業トラッカー',
-      emoji: true,
-    },
-    close: {
-      type: 'plain_text',
-      text: '閉じる',
-      emoji: true,
-    },
-    blocks: buildWorkCommandBlocks(),
-  };
-}
-
-function buildNoticeModalView(title, text) {
-  return {
-    type: 'modal',
-    title: {
-      type: 'plain_text',
-      text: title.slice(0, 24),
-      emoji: true,
-    },
-    close: {
-      type: 'plain_text',
-      text: '閉じる',
-      emoji: true,
-    },
-    blocks: [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text,
-        },
-      },
-    ],
-  };
-}
-
-function buildActiveSessionsText(activeSessions) {
-  if (activeSessions.length === 0) {
-    return '*現在作業中*\n作業中のメンバーはいません。';
-  }
-
-  const rows = activeSessions.map((session) => {
-    return `• <@${session.slack_user_id}> ${formatTokyoDateTime(session.started_at)}〜`;
-  });
-
-  return ['*現在作業中*', ...rows].join('\n');
-}
-
-function buildTodayTotalsText(todayTotals) {
-  if (todayTotals.length === 0) {
-    return '*本日の作業時間（作業中含む）*\n記録はまだありません。';
-  }
-
-  const rows = todayTotals.map((summary) => {
-    const activeLabel = summary.isActive ? '（作業中）' : '';
-    return `• <@${summary.slackUserId}> ${formatDuration(summary.totalMinutes)}${activeLabel}`;
-  });
-
-  return ['*本日の作業時間（作業中含む）*', ...rows].join('\n');
-}
-
-function buildWeekTotalsText(weekTotals) {
-  if (weekTotals.length === 0) {
-    return '*今週の作業時間（月〜日、作業中含む）*\n記録はまだありません。';
-  }
-
-  const rows = weekTotals.map((summary) => {
-    const activeLabel = summary.isActive ? '（作業中）' : '';
-    return `• <@${summary.slackUserId}> ${formatDuration(summary.totalMinutes)}${activeLabel}`;
-  });
-
-  return ['*今週の作業時間（月〜日、作業中含む）*', ...rows].join('\n');
-}
-
-function buildUserStatusText({ activeSessions, todayTotals, userId }) {
-  const activeSession = activeSessions.find((session) => session.slack_user_id === userId);
-  const todaySummary = todayTotals.find((summary) => summary.slackUserId === userId);
-  const todayDuration = todaySummary ? formatDuration(todaySummary.totalMinutes) : '0分';
-
-  if (activeSession) {
-    return [
-      '*あなたの状況*',
-      '状態：作業中',
-      `開始：${formatTokyoDateTime(activeSession.started_at)}`,
-      `本日：${todayDuration}`,
-    ].join('\n');
-  }
-
-  return ['*あなたの状況*', '状態：未開始または終了済み', `本日：${todayDuration}`].join('\n');
-}
-
-function buildHomeDashboardView({ activeSessions, todayTotals, weekTotals, userId, now = new Date() }) {
-  return {
-    type: 'home',
-    callback_id: 'work_dashboard_home',
-    blocks: [
-      {
-        type: 'header',
-        text: {
-          type: 'plain_text',
-          text: '作業時間ダッシュボード',
-          emoji: true,
-        },
-      },
-      {
-        type: 'context',
-        elements: [
-          {
-            type: 'mrkdwn',
-            text: `最終更新：${formatTokyoDateTime(now)}`,
-          },
-        ],
-      },
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: buildUserStatusText({ activeSessions, todayTotals, userId }),
-        },
-      },
-      buildHomeDashboardActionBlock(),
-      {
-        type: 'divider',
-      },
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: buildActiveSessionsText(activeSessions),
-        },
-      },
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: buildTodayTotalsText(todayTotals),
-        },
-      },
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: buildWeekTotalsText(weekTotals),
-        },
-      },
-    ],
-  };
-}
-
-function buildWorkPanelBlocks(activeSessions = [], todayTotals = []) {
-  return [
-    {
-      type: 'header',
-      text: {
-        type: 'plain_text',
-        text: '作業時間トラッカー',
-        emoji: true,
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '作業を始める時と終える時に、下のボタンを押してください。',
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: buildActiveSessionsText(activeSessions),
-      },
-    },
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: buildTodayTotalsText(todayTotals),
-      },
-    },
-    buildWorkActionBlock(),
-  ];
-}
-
-async function openWorkCommandModal({ body, client }) {
   try {
-    await client.views.open({
+    const result = await client.views.open({
       trigger_id: body.trigger_id,
-      view: buildWorkCommandModalView(),
+      view: buildWorkCommandModalView({ loading: true }),
     });
+    openedView = result.view;
   } catch (error) {
     console.error('作業操作モーダルの表示に失敗しました。', getSlackErrorCode(error));
+    return;
+  }
+
+  if (!openedView?.id) {
+    console.error('作業操作モーダルのView IDを取得できませんでした。');
+    return;
+  }
+
+  try {
+    const slackUserId = getSlackUserId(body);
+    const activeSession = slackUserId
+      ? await findActiveSession(supabase, slackUserId)
+      : null;
+
+    await client.views.update({
+      view_id: openedView.id,
+      view: buildWorkCommandModalView({ activeSession }),
+    });
+  } catch (error) {
+    console.error('作業操作モーダルの状態更新に失敗しました。', getSlackErrorCode(error));
+
+    try {
+      await client.views.update({
+        view_id: openedView.id,
+        view: buildNoticeModalView(
+          '確認できません',
+          '現在の作業状況を確認できませんでした。少し時間をおいてもう一度お試しください。',
+        ),
+      });
+    } catch (noticeError) {
+      console.error(
+        '作業操作モーダルのエラー表示に失敗しました。',
+        getSlackErrorCode(noticeError),
+      );
+    }
   }
 }
 
@@ -476,6 +262,22 @@ async function findSessionsInRange(supabase, range) {
     .lt('started_at', range.end.toISOString())
     .or(`ended_at.gte.${range.start.toISOString()},ended_at.is.null`)
     .order('started_at', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+async function findRecentCompletedSessions(supabase, slackUserId, limit = RECENT_SESSION_LIMIT) {
+  const { data, error } = await supabase
+    .from(TABLE_NAME)
+    .select(SESSION_COLUMNS)
+    .eq('slack_user_id', slackUserId)
+    .not('ended_at', 'is', null)
+    .order('ended_at', { ascending: false })
+    .limit(limit);
 
   if (error) {
     throw error;
@@ -701,12 +503,16 @@ async function loadDashboardData(supabase, now = new Date()) {
 
 async function publishHomeDashboard({ client, supabase, userId }) {
   const now = new Date();
-  const dashboardData = await loadDashboardData(supabase, now);
+  const [dashboardData, recentSessions] = await Promise.all([
+    loadDashboardData(supabase, now),
+    findRecentCompletedSessions(supabase, userId),
+  ]);
 
   await client.views.publish({
     user_id: userId,
     view: buildHomeDashboardView({
       ...dashboardData,
+      recentSessions,
       userId,
       now,
     }),
@@ -971,7 +777,7 @@ const app = new App({
 app.command('/work', async ({ ack, body, client }) => {
   await ack();
 
-  await openWorkCommandModal({ body, client });
+  await openWorkCommandModal({ body, client, supabase });
 });
 
 app.action(ACTION_WORK_START, async ({ ack, body, client }) => {
