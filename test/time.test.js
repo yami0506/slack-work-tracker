@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { calculateDurationMinutes, formatDuration, formatTokyoDateTime } from '../lib/time.js';
+import {
+  calculateDurationMinutes,
+  formatDuration,
+  formatTokyoDateTime,
+  getTokyoDayRange,
+} from '../lib/time.js';
 
 describe('formatDuration', () => {
   it('1時間未満は分だけで表示する', () => {
@@ -36,5 +41,25 @@ describe('formatTokyoDateTime', () => {
 
   it('不正な日時は日時不明にする', () => {
     assert.equal(formatTokyoDateTime('invalid'), '日時不明');
+  });
+});
+
+describe('getTokyoDayRange', () => {
+  it('Asia/Tokyoの1日の開始と終了をUTCで返す', () => {
+    const range = getTokyoDayRange('2026-07-29T10:30:00.000Z');
+
+    assert.equal(range.start.toISOString(), '2026-07-28T15:00:00.000Z');
+    assert.equal(range.end.toISOString(), '2026-07-29T15:00:00.000Z');
+  });
+
+  it('日本時間の日付が変わった直後を正しく扱う', () => {
+    const range = getTokyoDayRange('2026-07-29T15:00:00.000Z');
+
+    assert.equal(range.start.toISOString(), '2026-07-29T15:00:00.000Z');
+    assert.equal(range.end.toISOString(), '2026-07-30T15:00:00.000Z');
+  });
+
+  it('不正な日時はnullを返す', () => {
+    assert.equal(getTokyoDayRange('invalid'), null);
   });
 });

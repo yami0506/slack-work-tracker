@@ -3,7 +3,12 @@ import http from 'node:http';
 import slackBolt from '@slack/bolt';
 import { createClient } from '@supabase/supabase-js';
 import WebSocket from 'ws';
-import { calculateDurationMinutes, formatDuration, formatTokyoDateTime } from './lib/time.js';
+import {
+  calculateDurationMinutes,
+  formatDuration,
+  formatTokyoDateTime,
+  getTokyoDayRange,
+} from './lib/time.js';
 
 const { App } = slackBolt;
 
@@ -220,7 +225,20 @@ function buildActiveSessionsText(activeSessions) {
   return ['*現在作業中*', ...rows].join('\n');
 }
 
-function buildWorkPanelBlocks(activeSessions = []) {
+function buildTodayTotalsText(todayTotals) {
+  if (todayTotals.length === 0) {
+    return '*本日の作業時間（作業中含む）*\n記録はまだありません。';
+  }
+
+  const rows = todayTotals.map((summary) => {
+    const activeLabel = summary.isActive ? '（作業中）' : '';
+    return `• <@${summary.slackUserId}> ${formatDuration(summary.totalMinutes)}${activeLabel}`;
+  });
+
+  return ['*本日の作業時間（作業中含む）*', ...rows].join('\n');
+}
+
+function buildWorkPanelBlocks(activeSessions = [], todayTotals = []) {
   return [
     {
       type: 'header',
@@ -242,6 +260,13 @@ function buildWorkPanelBlocks(activeSessions = []) {
       text: {
         type: 'mrkdwn',
         text: buildActiveSessionsText(activeSessions),
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: buildTodayTotalsText(todayTotals),
       },
     },
     buildWorkActionBlock(),
@@ -314,6 +339,69 @@ async function findActiveSessions(supabase) {
   }
 
   return data || [];
+}
+
+async function findTodaySessions(supabase, dayRange) {
+  const { data, error } = await supabase
+    .from(TABLE_NAME)
+    .select(SESSION_COLUMNS)
+    .lt('started_at', dayRange.end.toISOString())
+    .or(`ended_at.gte.${dayRange.start.toISOString()},ended_at.is.null`)
+    .order('started_at', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+function calculateSessionMinutesWithinRange(session, dayRange, now = new Date()) {
+  const startedAtTime = new Date(session.started_at).getTime();
+  const endedAtTime = session.ended_at ? new Date(session.ended_at).getTime() : now.getTime();
+  const rangeStartTime = dayRange.start.getTime();
+  const rangeEndTime = dayRange.end.getTime();
+
+  if (Number.isNaN(startedAtTime) || Number.isNaN(endedAtTime)) {
+    return 0;
+  }
+
+  const effectiveStartTime = Math.max(startedAtTime, rangeStartTime);
+  const effectiveEndTime = Math.min(endedAtTime, rangeEndTime);
+  const durationMs = Math.max(0, effectiveEndTime - effectiveStartTime);
+
+  return Math.floor(durationMs / 1000 / 60);
+}
+
+function summarizeTodaySessions(sessions, dayRange, now = new Date()) {
+  const summariesByUser = new Map();
+
+  for (const session of sessions) {
+    const totalMinutes = calculateSessionMinutesWithinRange(session, dayRange, now);
+    const isActive = !session.ended_at;
+
+    if (totalMinutes === 0 && !isActive) {
+      continue;
+    }
+
+    const existingSummary = summariesByUser.get(session.slack_user_id) || {
+      slackUserId: session.slack_user_id,
+      totalMinutes: 0,
+      isActive: false,
+    };
+
+    existingSummary.totalMinutes += totalMinutes;
+    existingSummary.isActive = existingSummary.isActive || isActive;
+    summariesByUser.set(session.slack_user_id, existingSummary);
+  }
+
+  return [...summariesByUser.values()].sort((a, b) => {
+    if (b.totalMinutes !== a.totalMinutes) {
+      return b.totalMinutes - a.totalMinutes;
+    }
+
+    return a.slackUserId.localeCompare(b.slackUserId);
+  });
 }
 
 function getWorkPanelSettingKey(channelId) {
@@ -613,8 +701,11 @@ function getSlackErrorCode(error) {
 async function publishOrUpdateWorkPanel({ client, supabase, channelId }) {
   const settingKey = getWorkPanelSettingKey(channelId);
   const text = '作業時間トラッカー';
+  const todayRange = getTokyoDayRange();
   const activeSessions = await findActiveSessions(supabase);
-  const blocks = buildWorkPanelBlocks(activeSessions);
+  const todaySessions = await findTodaySessions(supabase, todayRange);
+  const todayTotals = summarizeTodaySessions(todaySessions, todayRange);
+  const blocks = buildWorkPanelBlocks(activeSessions, todayTotals);
   const savedPanel = await getAppSetting(supabase, settingKey);
   const savedMessageTs = savedPanel?.message_ts;
 
