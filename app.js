@@ -101,11 +101,19 @@ function loadConfig() {
   return config;
 }
 
+function writeJsonResponse(response, statusCode, payload) {
+  response.writeHead(statusCode, { 'content-type': 'application/json' });
+  response.end(JSON.stringify(payload));
+}
+
 function startHealthServer(port) {
   const server = http.createServer((request, response) => {
     if (request.url === '/healthz') {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ ok: true, service: 'slack-work-tracker' }));
+      writeJsonResponse(response, 200, {
+        ok: true,
+        service: 'slack-work-tracker',
+        uptime_seconds: Math.floor(process.uptime()),
+      });
       return;
     }
 
@@ -113,12 +121,23 @@ function startHealthServer(port) {
     response.end('Slack Work Tracker is running.\n');
   });
 
-  server.listen(port, () => {
-    console.log(`ヘルスチェック用HTTPサーバーを起動しました。port=${port}`);
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`ヘルスチェック用HTTPサーバーを起動しました。host=0.0.0.0, port=${port}`);
   });
 
   server.on('error', (error) => {
     console.error('ヘルスチェック用HTTPサーバーでエラーが発生しました。', error);
+  });
+}
+
+function registerProcessErrorHandlers() {
+  process.on('unhandledRejection', (reason) => {
+    console.error('未処理のPromiseエラーが発生しました。', reason);
+  });
+
+  process.on('uncaughtException', (error) => {
+    console.error('未処理の例外が発生しました。プロセスを終了します。', error);
+    process.exit(1);
   });
 }
 
@@ -756,6 +775,8 @@ async function publishOrUpdateWorkPanel({ client, supabase, channelId }) {
 }
 
 let config;
+
+registerProcessErrorHandlers();
 
 try {
   config = loadConfig();

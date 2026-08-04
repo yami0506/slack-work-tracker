@@ -109,13 +109,37 @@ UptimeRobotまたはcron-job.orgで、5分間隔で以下にHTTP GETしてくだ
 https://slack-work-tracker.onrender.com/healthz
 ```
 
+UptimeRobotでは以下を推奨します。
+
+- Monitor Type: `HTTP(s)`
+- URL: `https://slack-work-tracker.onrender.com/healthz`
+- Monitoring Interval: `5 minutes`
+- HTTP Method: `GET`
+- Timeout: 無料プランで選べる範囲の最大値
+
+Render Free Web Serviceは15分間インバウンド通信がないとスピンダウンします。
+5分間隔の監視で起こし続ける運用にできますが、無料枠のため一時的な502や再起動は完全にはゼロにできません。
+
 成功レスポンスは以下です。
 
 ```json
-{"ok":true,"service":"slack-work-tracker"}
+{"ok":true,"service":"slack-work-tracker","uptime_seconds":123}
 ```
 
-## 6. Slackで確認する
+`uptime_seconds` が小さい場合は、直前にRenderのプロセスが再起動またはスリープ復帰した可能性があります。
+
+## 6. 落ちた時の確認手順
+
+Slackでボタンが反応しない場合は、以下の順番で確認してください。
+
+1. ブラウザで `https://slack-work-tracker.onrender.com/healthz` を開く
+2. `ok:true` が出るか確認する
+3. 出ない場合はRender Dashboardの `Logs` を開く
+4. `Slack Work Trackerを起動しました。Socket Modeで接続中です。` が出ているか確認する
+5. `未処理のPromiseエラー` または `未処理の例外` が出ていれば、その前後のログを見る
+6. UptimeRobotの監視間隔が5分になっているか確認する
+
+## 7. Slackで確認する
 
 対象チャンネルに常設パネルが投稿または更新されていることを確認します。
 
